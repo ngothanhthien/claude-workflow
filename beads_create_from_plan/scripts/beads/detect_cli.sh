@@ -4,7 +4,10 @@ set -euo pipefail
 # Detect which Beads CLI binary exists. Prefer "br", fallback to "bd".
 mkdir -p .tmp
 
-if command -v bd >/dev/null 2>&1; then
+if command -v br >/dev/null 2>&1; then
+  echo "BEADS=br" > .tmp/beads.env
+  echo "Using Beads CLI: br"
+elif command -v bd >/dev/null 2>&1; then
   echo "BEADS=bd" > .tmp/beads.env
   echo "Using Beads CLI: bd"
 else

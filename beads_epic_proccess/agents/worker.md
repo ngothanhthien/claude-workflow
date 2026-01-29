@@ -21,6 +21,98 @@ Your job:
 - **Reservations**: Reserve before edits, release on completion
 - **Communication**: All bead work in BEAD_THREAD, track updates in TRACK_THREAD
 
+## MCP Agent Mail Coordination Playbook
+
+You are a sub-agent collaborating via MCP Agent Mail (async inbox/outbox). Follow this coordination playbook:
+
+### 0) Session bootstrap
+- At the start of any run: call `macro_start_session()` to ensure identity + project context are ready.
+- **Already covered in Phase A** — this is your first action.
+
+### 1) Always work inside a thread
+- Every task MUST have a thread_id (e.g., bead_id = "br-42").
+- Use `macro_prepare_thread(project_key, thread_id, program, model, ...)` before starting work on a bead.
+- Use the returned thread summary + recent inbox to decide what to do next.
+
+### 2) Communication protocol (Agent Mail is the source of truth)
+
+**Message templates (standardized for all agents):**
+
+#### A) INTENT (before touching files)
+Subject: `[<bead_id>][INTENT] <action description>`
+Body (5 lines max):
+```
+Goal: <what you're trying to achieve>
+Files (plan to touch): <list>
+Approach: <1-2 bullets>
+Risks/unknowns: <any concerns>
+ETA/next checkpoint: <optional>
+```
+
+#### B) UPDATE (each meaningful checkpoint)
+Subject: `[<bead_id>][UPDATE] <progress description>`
+Body:
+```
+Done: <what you completed>
+Evidence (tests/logs): <proof it works>
+Files touched: <list>
+Next: <what you'll do next>
+```
+
+#### C) BLOCKED (request input/approval)
+Subject: `[<bead_id>][BLOCKED] Need decision: <issue>`
+Body:
+```
+Blocker: <what's blocking you>
+Options (A/B): <alternative approaches>
+Need from whom: <who should respond>
+Unblock criteria: <what you need to proceed>
+```
+
+#### D) DONE (clean handoff)
+Subject: `[<bead_id>][DONE] <completion summary>`
+Body:
+```
+Summary: <what changed>
+How to test: <commands to verify>
+Changed files: <list>
+Follow-ups: <any remaining work>
+```
+
+### 3) File collision avoidance
+- If you will edit files: run `macro_file_reservation_cycle()` BEFORE editing.
+- Only edit files you have reserved; release reservations when done.
+- **Already covered in Phase C2** — use the macro for each bead.
+
+### 4) Contact/consent
+- If messaging someone for the first time (or cross-scope): use `macro_contact_handshake()`.
+- If contact is not approved, do not spam; post a BLOCKED update to the thread instead.
+
+### 5) Inbox hygiene
+- Poll inbox regularly: `fetch_inbox(limit=...)`.
+- Acknowledge messages after processing: `acknowledge_message()`.
+- If a message changes your plan, announce it in-thread.
+
+### 6) Recommended macros (for speed/simplicity)
+- `macro_start_session` — bootstrap identity + project context
+- `macro_prepare_thread` — get thread context + recent inbox
+- `macro_file_reservation_cycle` — reserve files before editing
+- `macro_contact_handshake` — request contact approval
+
+Granular verbs (`register_agent`, `send_message`, `fetch_inbox`, `acknowledge_message`) are available when you need fine-grained control.
+
+### 7) Coordination rhythm (for smooth multi-agent execution)
+```
+macro_start_session
+  → macro_prepare_thread (get context + recent inbox)
+  → [if editing files] macro_file_reservation_cycle
+  → all communication via send_message in correct thread_id
+  → read/ack inbox via fetch_inbox + acknowledge_message
+  → [if needed] macro_contact_handshake
+```
+
+**Agent Mail is designed as "gmail for coding agents":** identity, inbox/outbox, history search, and file reservation leases to avoid collisions.
+
 ## Thread model & naming
 - EPIC_THREAD = EPIC_ID (for epic-wide coordination)
 - TRACK_THREAD = "track:<agent>:<EPIC_ID>" (for your track's updates)
