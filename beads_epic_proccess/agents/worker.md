@@ -204,7 +204,7 @@ If bugfix/core logic/behavior change:
 2) Must:
    - reproduce-before / validate-after OR
    - exercise the key path + assert expected output
-3) Run locally; capture results in bead report
+3) Run locally to verify
 
 ### C7 — Sync and commit
 After implementing, before closing:
@@ -215,15 +215,7 @@ git add .beads/
 git commit -m "<bead_id>: <brief_description>"
 ```
 
-### C8 — Write bead report
-Create: `reports/EPIC_ID/beads/<bead_id>__<AGENT_NAME>.md`
-Content:
-- Summary of work
-- Files changed/added/removed
-- How to run tests (exact commands)
-- Any follow-ups / risks
-
-### C9 — Close bead and complete thread
+### C8 — Close bead and complete thread
 ```
 br close <bead_id> --reason "Completed"
 ```
@@ -235,7 +227,7 @@ send_message(
   agent_name="<your_name>",
   thread_id="<bead_id>",
   subject="[<bead_id>] Completed",
-  body="Summary of changes:\n- What was done\n- Files changed\n- Report path\n- Test status",
+  body="Summary of changes:\n- What was done\n- Files changed\n- Test status",
   ack_required=false
 )
 ```
@@ -325,7 +317,6 @@ Before closing each bead:
 - [ ] All changes within FILE_SCOPE (or got ACK for expansion)
 - [ ] Code follows project conventions
 - [ ] Tests pass (if applicable)
-- [ ] Bead report written to reports/EPIC_ID/beads/
 - [ ] Br changes synced: `br sync --flush-only` + `git add .beads/` + `git commit`
 - [ ] Bead closed: `br close <bead_id>`
 - [ ] BEAD_THREAD has completion message with summary
@@ -341,7 +332,6 @@ For each bead:
   → do work (post progress in-thread)
   → create test if needed
   → git add + br sync --flush-only + git commit
-  → write bead report
   → br close + send_message completion
   → (macro auto-releases reservation)
 Track complete → report to TRACK_THREAD → ask for more work

@@ -19,10 +19,11 @@ python3 -m mcp_agent_mail.cli clear-and-reset-everything --force
 
 ## Inputs (determine early)
 - PROJECT_ROOT: absolute path to repo
-- EPIC_ID: existing beads epic id (e.g., br-a3f8e9) - or create new epic
+- EPIC_ID: (AUTO-PICKED) existing beads epic id - automatically selected from highest-priority ready epic
 - WORKER_POOL: list of agent names (e.g., BlueLake, GreenCastle, RedStone)
 - MAX_PARALLEL_WORKERS: default 3
 - (optional) SHARED_SCOPE: glob list of files that commonly conflict (lockfiles, schema, global config)
+- AUTO_CONTINUE: whether to auto-pick next epic after completion (default: true)
 
 ## Non-negotiable protocols
 - Beads is the task source of truth (create/update/close there).
@@ -38,88 +39,6 @@ python3 -m mcp_agent_mail.cli clear-and-reset-everything --force
   - Bead messages: "[br-42] ..."
   - Track summary: "[Track] ..."
   - Epic-wide decision: "[EPIC] ..."
-
-## Checkpoint System (Non-Stop Execution)
-
-**Purpose**: Enable workflow to resume after session interruption, ensuring epic completion even if Claude session terminates.
-
-**Checkpoint File**: `.beads/.epic_checkpoint.json`
-
-### Checkpoint Schema
-```json
-{
-  "epic_id": "br-a3f8e9",
-  "project_root": "/absolute/path/to/repo",
-  "orchestrator_name": "RedStone",
-  "epic_thread": "br-a3f8e9",
-  "tracks": [
-    {
-      "worker": "BlueLake",
-      "track_thread": "track:BlueLake:br-a3f8e9",
-      "bead_list": ["br-1", "br-2", "br-3"],
-      "file_scope": "frontend/**",
-      "status": "active"
-    }
-  ],
-  "worker_pool": ["BlueLake", "GreenCastle", "RedStone"],
-  "max_parallel_workers": 3,
-  "last_check": "2025-01-28T10:30:00Z",
-  "checkpoint_version": 1
-}
-```
-
-### Phase A.5 — Resume from checkpoint (if exists)
-
-**Check for checkpoint before starting fresh**:
-
-1. Check if `.beads/.epic_checkpoint.json` exists
-2. Read and validate JSON
-3. Verify `epic_id` matches current EPIC_ID
-4. If valid:
-   - Restore all state variables
-   - Announce in EPIC_THREAD: "[EPIC] Resuming from checkpoint (last_check: <timestamp>)"
-   - Skip directly to Phase F (monitoring loop)
-5. If invalid or missing:
-   - Proceed with normal Phase A startup
-
-### Save checkpoint (call during monitoring)
-
-After each monitoring loop iteration, save checkpoint:
-
-```bash
-cat > .beads/.epic_checkpoint.json << 'EOF'
-{
-  "epic_id": "<EPIC_ID>",
-  "project_root": "<PROJECT_ROOT>",
-  "orchestrator_name": "<ORCHESTRATOR_NAME>",
-  "epic_thread": "<EPIC_THREAD>",
-  "tracks": [
-    {
-      "worker": "<worker_name>",
-      "track_thread": "<track_thread>",
-      "bead_list": [<bead_ids>],
-      "file_scope": "<file_scope>",
-      "status": "active|completed"
-    }
-  ],
-  "worker_pool": [<WORKER_POOL>],
-  "max_parallel_workers": <MAX_PARALLEL_WORKERS>,
-  "last_check": "<current_timestamp>",
-  "checkpoint_version": 1
-}
-EOF
-```
-
-### Clear checkpoint (on epic completion)
-
-After epic completion and reporter:
-```bash
-rm .beads/.epic_checkpoint.json
-```
-
-Also clear when user explicitly requests reset (in subagent_clear_mail).
-
----
 
 ## Phase A — Start session (Project + Orchestrator identity)
 Use macro for speed and simplicity:
@@ -155,12 +74,24 @@ Set: importance=high, ack_required=false (workers will ack after they register a
 
 IMPORTANT: Do NOT send messages to worker names yet - they don't exist. Workers will register themselves when spawned.
 
-## Phase C — Load epic graph & triage READY work
+## Phase C — Auto-pick epic & Load epic graph & triage READY work
+
+### Auto-pick EPIC_ID (if not provided)
+1) Get all READY beads: `br ready`
+2) Get AI priority ranking: `bv --robot-priority` (returns ranked tasks with impact scores)
+3) Group READY beads by their epic (using `br dep tree` to find parent epics)
+4) Score each epic by:
+   - Sum of priority scores of its READY beads
+   - Number of READY beads (more = higher priority)
+   - Epic age (older = slightly higher priority)
+5) Select highest-scored epic as EPIC_ID
+6) Announce in EPIC_THREAD: "[EPIC] Auto-selected EPIC_ID — Ready to begin"
+
+### Load selected epic graph
 1) br dep tree EPIC_ID
-2) br ready (global)
-3) Get AI priority ranking: `bv --robot-priority` (returns ranked tasks with impact scores)
-4) Intersect: READY beads that are in EPIC subtree, sorted by priority
-5) If none:
+2) Get AI priority ranking: `bv --robot-priority` (returns ranked tasks with impact scores)
+3) Intersect: READY beads that are in EPIC subtree, sorted by priority
+4) If none:
    - br blocked
    - Post EPIC thread state summary + next steps (no "busy waiting")
    - Continue monitoring loop
@@ -279,7 +210,6 @@ This file contains:
    - Send [UPDATE] messages at meaningful checkpoints
    - Create tests if behavior changes
    - Sync and commit: git add + br sync --flush-only + git commit
-   - Write bead report to reports/EPIC_ID/beads/
    - Close bead: br close <bead_id>
    - Send [DONE] message to BEAD_THREAD with summary
 5. Phase E: When all beads complete, report to TRACK_THREAD and ask for more work
@@ -306,12 +236,11 @@ Repeat:
 - search_messages(query=EPIC_ID, limit=50)
 - br ready / br blocked (for EPIC subtree)
 - Check changes: `bv --robot-diff --diff-since "1 hour ago"` (shows new, closed, changed tasks)
-- **Save checkpoint** (after processing all state, before sleep)
+- **If AUTO_CONTINUE=true**: Scan for other ready epics (note them for later, don't distract from current epic)
 
 If new READY beads appear:
 - assign into an existing compatible track OR spawn a new worker if capacity allows
 - announce assignment in EPIC_THREAD
-- Update checkpoint with new track/worker assignment
 
 If you detect:
 - reservation conflicts
@@ -319,28 +248,6 @@ If you detect:
 - shared-file contention
 Then:
 - force a COORD mail + ack_required=true before anyone proceeds
-
-**Checkpoint save pattern** (end of each loop):
-```bash
-# After processing all updates and before sleep
-cat > .beads/.epic_checkpoint.json << EOF
-{
-  "epic_id": "$EPIC_ID",
-  "project_root": "$PROJECT_ROOT",
-  "orchestrator_name": "$ORCHESTRATOR_NAME",
-  "epic_thread": "$EPIC_THREAD",
-  "tracks": [
-    $(for track in "${tracks[@]}"; do
-      echo "  {\"worker\": \"${track[worker]}\", \"track_thread\": \"${track[track_thread]}\", \"bead_list\": [${track[bead_list]}], \"file_scope\": \"${track[file_scope]}\", \"status\": \"${track[status]}\"},"
-    done)
-  ],
-  "worker_pool": [$(printf '"%s",' "${WORKER_POOL[@]}")],
-  "max_parallel_workers": $MAX_PARALLEL_WORKERS,
-  "last_check": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "checkpoint_version": 1
-}
-EOF
-```.
 
 ## Phase G — Handle blockers (standard)
 When a worker reports BLOCKER:
@@ -362,8 +269,21 @@ When all beads in EPIC subtree are CLOSED:
    - PROJECT_ROOT, EPIC_ID, EPIC_THREAD
 3) Verify output exists:
    - reports/EPIC_ID/EPIC_SUMMARY.md
-4) Cleanup checkpoint: `rm .beads/.epic_checkpoint.json`
-5) Final mail: where the summary is, and any follow-up beads (if any)
+4) Final mail: where the summary is, and any follow-up beads (if any)
+
+### Auto-continue to next epic (if AUTO_CONTINUE=true)
+After epic completion and report generated:
+1) Run auto-pick logic again:
+   - Get all READY beads: `br ready`
+   - Get AI priority ranking: `bv --robot-priority`
+   - Group by epic and score as before
+2) If another epic has READY beads:
+   - Set EPIC_ID to the new epic
+   - Send EPIC_THREAD mail: "[EPIC] Auto-continuing to next epic: <new_EPIC_ID>"
+   - Return to Phase B (Kickoff) and repeat workflow
+3) If no more ready epics:
+   - Send final EPIC_THREAD mail: "[EPIC] All epics complete — workflow finished"
+   - Exit cleanly with summary of all completed epics
 
 ---
 
@@ -387,9 +307,8 @@ WHILE epic NOT complete:
   3. br ready / br blocked
   4. bv --robot-diff --diff-since "5 minutes ago"
   5. Process any new messages or state changes
-  6. Save checkpoint to .beads/.epic_checkpoint.json
-  7. Report: "Monitoring: [workers active] [beads remaining] [last check: timestamp]"
-  8. Wait 30-60 seconds, then repeat
+  6. Report: "Monitoring: [workers active] [beads remaining] [last check: timestamp]"
+  7. Wait 30-60 seconds, then repeat
 ```
 
 ### Exit Conditions
