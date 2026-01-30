@@ -1,5 +1,6 @@
 ---
-description: beads_epic_proccess
+name: beads_epic_proccess
+description: Multi-agent Beads epic workflow with Orchestrator, Workers, and Reporter
 ---
 
 ## Agent References
